@@ -33,11 +33,13 @@ class HTTPResponse(object):
         self.body = body
 
 class HTTPClient(object):
-    #def get_host_port(self,url):
+    def get_host_port(self,url):
+        parsedUrl = urllib.parse.urlparse(url)
+        return parsedUrl.hostname, parsedUrl.port
 
     def connect(self, host, port):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.connect((host, port))
+        self.socket.connect((host, port or 80))
         return None
 
     def get_code(self, data):
@@ -60,21 +62,84 @@ class HTTPClient(object):
         buffer = bytearray()
         done = False
         while not done:
-            part = sock.recv(1024)
+            try:
+                part = sock.recv(1024)
+            except socket.timeout:
+                done = True
+                continue
             if (part):
                 buffer.extend(part)
             else:
                 done = not part
-        return buffer.decode('utf-8')
+        return buffer
 
     def GET(self, url, args=None):
-        code = 500
-        body = ""
+        host, port = self.get_host_port(url)
+        self.connect(host, port)
+        parsedUrl = urllib.parse.urlparse(url)
+        if parsedUrl.path == "":
+            header = ("GET / HTTP/1.1\r\n" +
+                "Host: " + parsedUrl.hostname + "\r\n" + 
+                "Accept: */*\r\n" +
+                "Accept-Charset: UTF-8\r\n\r\n")
+        else:
+            header = ("GET " + parsedUrl.path + " HTTP/1.1\r\n" +
+                    "Host: " + parsedUrl.hostname + "\r\n" + 
+                    "Accept-Charset: UTF-8\r\n\r\n")
+        self.sendall(header)
+        self.socket.settimeout(0.5)
+        response = self.recvall(self.socket)
+        headers, body = response.split(b"\r\n\r\n", 1)
+        headers = headers.decode(encoding="utf-8").split("\r\n")
+        code = int((headers[0].split(" "))[1])
+        encoding = "utf-8"
+        for header in headers:
+            if "charset=" in header:
+                encoding = (header.split("="))[1]
+        body = body.decode(encoding=encoding)
+        self.close()
+        print(body)
         return HTTPResponse(code, body)
 
     def POST(self, url, args=None):
-        code = 500
-        body = ""
+        if args is not None:
+            args = urllib.parse.urlencode(args)
+        host, port = self.get_host_port(url)
+        self.connect(host, port)
+        parsedUrl = urllib.parse.urlparse(url)
+        if args is None:
+            header = ("POST / HTTP/1.1\r\n" +
+                "Host: " + parsedUrl.hostname + "\r\n" + 
+                "Content-Type: application/x-www-form-urlencoded\r\n" +
+                "Content-Length: " + "0" + "\r\n" +
+                "Accept-Charset: UTF-8\r\n\r\n")
+        elif parsedUrl.path == "":
+            header = ("POST / HTTP/1.1\r\n" +
+                "Host: " + parsedUrl.hostname + "\r\n" + 
+                "Content-Type: application/x-www-form-urlencoded\r\n" +
+                "Content-Length: " + str(len(args)) + "\r\n" +
+                "Accept-Charset: UTF-8\r\n\r\n" +
+                args)
+        else:
+            header = ("POST " + parsedUrl.path + " HTTP/1.1\r\n" +
+                    "Host: " + parsedUrl.hostname + "\r\n" + 
+                    "Content-Type: application/x-www-form-urlencoded\r\n" +
+                    "Content-Length: " + str(len(args)) + "\r\n" +
+                    "Accept-Charset: UTF-8\r\n\r\n" +
+                    args)
+        self.sendall(header)
+        self.socket.settimeout(0.5)
+        response = self.recvall(self.socket)
+        headers, body = response.split(b"\r\n\r\n", 1)
+        headers = headers.decode(encoding="utf-8").split("\r\n")
+        code = int((headers[0].split(" "))[1])
+        encoding = "utf-8"
+        for header in headers:
+            if "charset=" in header:
+                encoding = (header.split("="))[1]
+        body = body.decode(encoding=encoding)
+        self.close()
+        print(body)
         return HTTPResponse(code, body)
 
     def command(self, url, command="GET", args=None):
